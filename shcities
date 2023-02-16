@@ -1,0 +1,168 @@
+#!/bin/sh -eu
+
+# Made by jumps are op
+# This software is under GPL version 3 and comes with ABSOLUTELY NO WARRANTY
+
+main(){
+	PRG=${0##*/}
+	mkdir -p -- \
+		"${SHCITIES_CONF:=${XDG_CONFIG_HOME:-${HOME:-.}/.config}/shcities}"
+
+	while getopts c: OPT;do
+		case $OPT in
+			c)SHCITIES_CONF=$OPTARG;;
+			*)dishelp;;
+		esac
+	done
+
+	:<"$SHCITIES_CONF"
+	if [ "$1" != login ] && [ ! -f "$SHCITIES_CONF"/conf ];then
+		echo "First time?"
+		printf "Site/User name: "
+		read -r user
+		login "$user"
+		[ "$1" = login ] && exit
+	else
+		read -r apikey <"$SHCITIES_CONF"/conf
+	fi
+
+	case ${1-} in
+		login)login "$@";;
+		push)shift; push "${@:-.}";;
+		upload)shift; upload "$@";;
+		delete)shift; delete "$@";;
+		list)shift; list "$@";;
+		info)info;;
+		logout)rm -r -- "$SHCITIES_CONF";;
+		*)dishelp;;
+	esac
+}
+
+login(){
+	[ ! "$1" ] && {
+		printf "Site/User name: "
+		read -r user
+	}
+
+	oldstty=$(stty -g) && trap 'stty "$oldstty"; exit' INT EXIT && stty -echo
+	printf "Password: "
+	read -r password
+	[ "$oldstty" ] && stty "$oldstty" && trap - INT EXIT
+
+	printf "\nAuthenticating..."
+	apikey=$(curl -Ss "https://$user:$password@neocities.org/api/key" |
+		sed -n 's/"api_key":[[:space:]]*"\([^"]*\)"/\1/p')
+	if [ ! "$apikey" ];then
+		echo
+		echo "Failed to authenticate (check username and password?)" >&2
+		exit 1
+	fi
+	printf "\rDone authenticating.\n"
+
+	cat >"$SHCITIES_CONF/conf" <<-EOF
+		$apikey
+	EOF
+	echo "Done creating configuration,"
+}
+
+push(){
+	cachelist=$(list pale)
+	for dir;do
+		cd "$dir"
+		dir=$(printf %s "$dir" | tr -s '/'; echo .)
+		dir=${dir%.}
+		dir=${dir%/}
+		find . -type f | while read -r file;do
+			sum=$(sha1sum -- "$file" | cut -d\  -f1)
+			printf %s "$cachelist" | grep '"path"\|"sha1_hash"' |
+				while IFS=\" read -r _ type _ data _;do
+				if [ "$type" = path ] && [ "$dir/$data" = "$file" ];then
+					IFS=\" read -r _ _ _ remotesum _
+					[ "$remotesum" = "$sum" ] && break
+					upload "$file"
+				fi
+			done
+		done
+	done
+}
+
+upload(){
+	for file;do
+		:<"$file"
+		if [ -d "$file" ];then
+			echo "$PRG: $file: Is a directory"
+			exit 1
+		fi
+		request -F "$file=@$file" "https://neocities.org/api/upload" |
+			parseresult UPLOAD "$file"
+	done
+}
+
+
+delete(){
+	for file;do
+		request -d "filenames[]=$file" https://neocities.org/api/delete |
+			parseresult DELETED "$file"
+	done
+}
+
+parseresult(){
+	msg=$(cat -)
+	if echo "$msg" | grep -q '"result": *"success"';then
+		echo "[1;32m[$1][m ${2:?}"
+	else
+		echo "[1;31m[FAIL][m ${2:?}"
+	fi
+}
+
+list(){
+	if [ "${1-}" = pale ];then
+		request https://neocities.org/api/list
+	else
+		request https://neocities.org/api/list |
+			sed -n 's/^[[:space:]]*"path":[[:space:]]*"\(.*\)"\(,\|\)$/\1/p'
+	fi
+}
+
+info(){
+	request https://neocities.org/api/info |
+		sed '1,2d; $d; s/"\([^"]*\)"/\1/g; s/,$//; s/^  //'
+}
+
+request(){
+	curl -s -H "Authorization: Bearer ${apikey:?}" "$@"
+}
+
+dishelp(){
+	cat <<EOF
+shcities  Neocities cli tool in POSIX™ shell
+Copyright (C) 2023  Jumps are op (jumpsareop@gmail.com)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+USAGE: shcities COMMAND [ARGUMENTS]...
+
+COMMANDS:
+	login [USER]           Login as USER, password will be read from stdin
+	                       If USER isn't specified then it's read from stdin
+	push [DIR]             Recursively upload a local directory to your site
+	                       If DIR isn't specified then ./ is used
+	upload FILE [FILE]...  Upload individual files to your Neocities site
+	delete FILE [FILE]...  Delete files from your Neocities site
+	list [pale]            List files from your Neocities site
+	                       If "pale" is specified then plain JSON is printed
+	info                   Information and stats for your site
+	logout                 Delete configuration
+EOF
+	exit 1
+}
+
+main "$@"
