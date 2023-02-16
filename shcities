@@ -78,10 +78,11 @@ push(){
 				while IFS=\" read -r _ type _ data _;do
 				if [ "$type" = path ] && [ "$dir/$data" = "$file" ];then
 					IFS=\" read -r _ _ _ remotesum _
-					[ "$remotesum" = "$sum" ] && break
-					upload "$file"
+					[ "$remotesum" = "$sum" ] && continue 2
+					break
 				fi
 			done
+			upload "$file"
 		done
 	done
 }
