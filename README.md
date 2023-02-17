@@ -23,6 +23,6 @@ and it also sucks)
 3. Why not. :>
 
 ## Dependencies
-Other than a POSIX-compliant shell and utilities
+Other than a POSIX-compliant shell and utilities,
 you need `curl` to be installed.  
 And that's it. (that the beauty of POSIX™ shell scripts :) )
