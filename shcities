@@ -68,22 +68,23 @@ login(){
 push(){
 	cachelist=$(list pale)
 	for dir;do
+		(
 		cd "$dir"
-		dir=$(printf %s "$dir" | tr -s '/'; echo .)
-		dir=${dir%.}
-		dir=${dir%/}
 		find . -type f | while read -r file;do
 			sum=$(sha1sum -- "$file" | cut -d\  -f1)
-			printf %s "$cachelist" | grep '"path"\|"sha1_hash"' |
-				while IFS=\" read -r _ type _ data _;do
-				if [ "$type" = path ] && [ "$dir/$data" = "$file" ];then
+			# continue 2 wont work in a subshell
+			while IFS=\" read -r _ type _ data _;do
+				if [ "$type" = path ] && [ "./$data" = "$file" ];then
 					IFS=\" read -r _ _ _ remotesum _
 					[ "$remotesum" = "$sum" ] && continue 2
 					break
 				fi
-			done
+			done <<-EOF
+				$(printf %s "$cachelist" | grep '"path"\|"sha1_hash"')
+			EOF
 			upload "$file"
 		done
+		)
 	done
 }
 
