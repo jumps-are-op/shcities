@@ -1,6 +1,6 @@
 #!/bin/sh -eu
 
-# Made by jumps are op
+# Made by jumps are op (jumpsareop@gmail.com)
 # This software is under GPL version 3 and comes with ABSOLUTELY NO WARRANTY
 
 main(){
@@ -16,15 +16,11 @@ main(){
 	done
 
 	:<"$SHCITIES_CONF"
-	if [ "$1" != login ] && [ ! -f "$SHCITIES_CONF"/conf ];then
-		echo "First time?"
-		printf "Site/User name: "
-		read -r user
-		login "$user"
-		[ "$1" = login ] && exit
-	else
-		read -r apikey <"$SHCITIES_CONF"/conf
-	fi
+	[ "$1" != login ] && [ ! -f "$SHCITIES_CONF"/conf ] && {
+		echo "First time?"; login
+	}
+
+	read -r apikey <"$SHCITIES_CONF"/conf
 
 	case ${1-} in
 		login)login "$@";;
@@ -70,9 +66,12 @@ push(){
 	for dir;do
 		(
 		cd "$dir"
-		find . -type f | while read -r file;do
+		# NOTE: this won't work if file name have:
+		# newline, backslash, or quotes
+		find . -type f | while IFS= read -r file;do
 			sum=$(sha1sum -- "$file" | cut -d\  -f1)
-			# continue 2 wont work in a subshell
+			# "continue 2" will not work in a sub-shell
+			# so I used <<-EOF instead of piping
 			while IFS=\" read -r _ type _ data _;do
 				if [ "$type" = path ] && [ "./$data" = "$file" ];then
 					IFS=\" read -r _ _ _ remotesum _
@@ -95,6 +94,7 @@ upload(){
 			echo "$PRG: $file: Is a directory"
 			exit 1
 		fi
+		printf "\\r[K%s" "[1;33m[UPLOADING][m ${2:?}..."
 		request -F "$file=@$file" "https://neocities.org/api/upload" |
 			parseresult UPLOAD "$file"
 	done
@@ -103,27 +103,23 @@ upload(){
 
 delete(){
 	for file;do
+		printf %s "[1;33m[DELETING][m ${2:?}..."
 		request -d "filenames[]=$file" https://neocities.org/api/delete |
 			parseresult DELETED "$file"
 	done
 }
 
 parseresult(){
-	msg=$(cat -)
-	if echo "$msg" | grep -q '"result": *"success"';then
-		echo "[1;32m[$1][m ${2:?}"
-	else
-		echo "[1;31m[FAIL][m ${2:?}"
-	fi
+	grep -q '"result": *"success"' &&
+		printf "\\r[K%s\n" "[1;32m[$1][m ${2:?}" ||
+		printf "\\r[K%s\n" "[1;31m[FAILED][m ${2:?}"
 }
 
 list(){
-	if [ "${1-}" = pale ];then
-		request https://neocities.org/api/list
-	else
-		request https://neocities.org/api/list |
-			sed -n 's/^[[:space:]]*"path":[[:space:]]*"\(.*\)"\(,\|\)$/\1/p'
-	fi
+	request https://neocities.org/api/list | {
+		[ "${1-}" = pale ] && cat
+		sed -n 's/^[[:space:]]*"path":[[:space:]]*"\(.*\)"\(,\|\)$/\1/p'
+	}
 }
 
 info(){
@@ -131,9 +127,7 @@ info(){
 		sed '1,2d; $d; s/"\([^"]*\)"/\1/g; s/,$//; s/^  //'
 }
 
-request(){
-	curl -s -H "Authorization: Bearer ${apikey:?}" "$@"
-}
+request(){ curl -s -H "Authorization: Bearer ${apikey:?}" "$@";}
 
 dishelp(){
 	cat <<EOF
@@ -150,19 +144,24 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
-USAGE: shcities COMMAND [ARGUMENTS]...
+USAGE: shcities [OPTIONS] COMMAND [ARGUMENTS]...
+
+OPTIONS:
+	-c CONFIG   Use CONFIG as the configuration file,
+	            default ${XDG_CONFIG_HOME:-${HOME:-.}/.config}/shcities/conf,
+	            or \$SHCITIES_CONF
 
 COMMANDS:
 	login [USER]           Login as USER, password will be read from stdin
 	                       If USER isn't specified then it's read from stdin
 	push [DIR]             Recursively upload a local directory to your site
 	                       If DIR isn't specified then ./ is used
-	upload FILE [FILE]...  Upload individual files to your Neocities site
-	delete FILE [FILE]...  Delete files from your Neocities site
+	upload FILE [FILE]...  Upload individual file(s) to your Neocities site
+	delete FILE [FILE]...  Delete file(s) from your Neocities site
 	list [pale]            List files from your Neocities site
 	                       If "pale" is specified then plain JSON is printed
 	info                   Information and stats for your site
-	logout                 Delete configuration
+	logout                 Logout by clearing the local API key
 EOF
 	exit 1
 }
