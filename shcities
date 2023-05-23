@@ -1,7 +1,14 @@
-#!/bin/sh -eu
-
+#!/bin/sh --
+set -ue
 # Made by jumps are op (jumpsareop@gmail.com)
 # This software is under GPL version 3 and comes with ABSOLUTELY NO WARRANTY
+
+alias pecho='printf %s\\n'
+export  NEOCITIES_API="${NEOCITIES_API:=https://neocities.org/api}"
+
+# Because of how the internet works only the following is allowed:
+# a-z A-Z 0-9 _ - .
+# and a - in the start of the file isn't allowed.
 
 main(){
 	PRG=${0##*/}
@@ -13,17 +20,21 @@ main(){
 			c)SHCITIES_CONF=$OPTARG;;
 			*)dishelp;;
 		esac
-	done
+	done; shift $((OPTIND-1))
+
+	[ $# = 0 ] && dishelp
 
 	:<"$SHCITIES_CONF"
 	[ "$1" != login ] && [ ! -f "$SHCITIES_CONF"/conf ] && {
 		echo "First time?"; login
 	}
 
-	read -r apikey <"$SHCITIES_CONF"/conf
+	[ -f "$SHCITIES_CONF"/conf ] &&
+		read -r apikey <"$SHCITIES_CONF"/conf
+	export apikey
 
 	case ${1-} in
-		login)login "$@";;
+		login)shift; login "$@";;
 		push)shift; push "${@:-.}";;
 		upload)shift; upload "$@";;
 		delete)shift; delete "$@";;
@@ -35,103 +46,95 @@ main(){
 }
 
 login(){
-	[ ! "$1" ] && {
-		printf "Site/User name: "
-		read -r user
-	}
+	[ ! "${1-}" ] && { printf "Site/User name: "; read -r user;}
 
 	oldstty=$(stty -g) && trap 'stty "$oldstty"; exit' INT EXIT && stty -echo
 	printf "Password: "
 	read -r password
 	[ "$oldstty" ] && stty "$oldstty" && trap - INT EXIT
 
-	printf "\nAuthenticating..."
+	printf "\nAuthenticating..." >&2
 	apikey=$(curl -Ss "https://$user:$password@neocities.org/api/key" |
-		sed -n 's/"api_key":[[:space:]]*"\([^"]*\)"/\1/p')
-	if [ ! "$apikey" ];then
-		echo
-		echo "Failed to authenticate (check username and password?)" >&2
-		exit 1
-	fi
+		sed -n 's/"api_key": "\([^"]*\)"/\1/p')
+	[ ! "$apikey" ] && { cat >&2 <<-EOF; exit;}
+
+		Failed to authenticate (check username and password?)
+	EOF
+
 	printf "\rDone authenticating.\n"
 
-	cat >"$SHCITIES_CONF/conf" <<-EOF
-		$apikey
-	EOF
-	echo "Done creating configuration,"
+	pecho "$apikey" >"$SHCITIES_CONF/conf"
+	echo Done creating configuration.
 }
 
 push(){
-	cachelist=$(list pale)
-	for dir;do
-		(
-		cd "$dir"
-		# NOTE: this won't work if file name have:
-		# newline, backslash, or quotes
-		find . -type f | while IFS= read -r file;do
-			sum=$(sha1sum -- "$file" | cut -d\  -f1)
-			# "continue 2" will not work in a sub-shell
-			# so I used <<-EOF instead of piping
-			while IFS=\" read -r _ type _ data _;do
-				if [ "$type" = path ] && [ "./$data" = "$file" ];then
-					IFS=\" read -r _ _ _ remotesum _
-					[ "$remotesum" = "$sum" ] && continue 2
-					break
-				fi
-			done <<-EOF
-				$(printf %s "$cachelist" | grep '"path"\|"sha1_hash"')
-			EOF
-			upload "$file"
+	cachelist=$(list pale | grep '"path"\|"sha1_hash"')
+	for dir;do (case $dir in [!/]*)dir=./$dir; esac; cd "$dir"
+	find . -type f -print -exec sh -c '
+	for file;do
+		case $file in *[![:alnum:]_/.-]*)
+			pecho "$file: Invalid file name" >&2; continue
+		esac
+		printf %s\\n "$file"
+	done' -- '{}' + | while IFS= read -r file;do
+		sum=$(sha1sum <"$file") sum=${sum%% *}
+		printf %s "$cachelist" | while :;do
+			IFS=\" read -r _ _ _ path _ || { upload "$file"; break;}
+			IFS=\" read -r _ _ _ remotesum _
+			[ "./$path" = "$file" ] && {
+				[ "$remotesum" != "$sum" ] && upload "$file"
+				break
+			}
 		done
-		)
-	done
+	done);done
 }
 
-upload(){
-	for file;do
-		:<"$file"
-		if [ -d "$file" ];then
-			echo "$PRG: $file: Is a directory"
-			exit 1
-		fi
-		printf "\\r[K%s" "[1;33m[UPLOADING][m ${2:?}..."
-		request -F "$file=@$file" "https://neocities.org/api/upload" |
-			parseresult UPLOAD "$file"
-	done
-}
+upload(){ for file;do
+	:<"$file"
+	[ -d "$file" ] && { pecho "$PRG: $file: Is a directory"; exit 1;}
+	printf "\\r[K%s" "[1;33m[UPLOADING][m ${file:?}..."
+	request upload -F "$file=@$file" | parseresult UPLOADED "$file"
+done;}
 
 
-delete(){
-	for file;do
-		printf %s "[1;33m[DELETING][m ${2:?}..."
-		request -d "filenames[]=$file" https://neocities.org/api/delete |
-			parseresult DELETED "$file"
-	done
-}
+delete(){ for file;do
+	printf %s "[1;33m[DELETING][m ${file:?}..."
+	request delete -d "filenames[]=$file" | parseresult DELETED "$file"
+done;}
 
-parseresult(){
-	grep -q '"result": *"success"' &&
-		printf "\\r[K%s\n" "[1;32m[$1][m ${2:?}" ||
-		printf "\\r[K%s\n" "[1;31m[FAILED][m ${2:?}"
-}
+parseresult(){ sed -n '
+	# Read everything
+	:a; N; $!ba
 
-list(){
-	request https://neocities.org/api/list | {
-		[ "${1-}" = pale ] && cat
-		sed -n 's/^[[:space:]]*"path":[[:space:]]*"\(.*\)"\(,\|\)$/\1/p'
+	# Errors
+	/"result": "error"/{
+		s#.*"message": "\([^"]*\)".*#(\1)[K#
+		s#^#[1;31m[FAILED][m '"${2:?}"' #p
+		q
 	}
-}
 
-info(){
-	request https://neocities.org/api/info |
-		sed '1,2d; $d; s/"\([^"]*\)"/\1/g; s/,$//; s/^  //'
-}
+	# Successes (is that how it is written?)
+	/"result": "success"/{ i\
+'"[1;32m[$1][m ${2:?}[K"'
+		q
+	}
 
-request(){ curl -s -H "Authorization: Bearer ${apikey:?}" "$@";}
+	# Unknown
+	i\
+'"[1;33m[???][m ${2:?}[K"'
+	q
+';}
 
-dishelp(){
-	cat <<EOF
-shcities  Neocities cli tool in POSIX™ shell
+list(){ request list | { [ "${1-}" = pale ] && cat
+	sed -n 's/^[[:space:]]*"path": "\(.*\)",*$/\1/p';};}
+
+info(){ request info |
+	sed '2,3d;s/,$//; s/ *[][{}] *$//; s/    //; /^$/d; s/"\([^"]*\)"/\1/g';}
+
+request(){ curl -Ss -H"Authorization: Bearer ${apikey:?}" "$NEOCITIES_API/$@";}
+
+dishelp(){ cat <<EOF; exit 1;}
+shcities  Neocities CLI tool in POSIX™ shell
 Copyright (C) 2023  Jumps are op (jumpsareop@gmail.com)
 
 This program is free software: you can redistribute it and/or modify
@@ -156,14 +159,12 @@ COMMANDS:
 	                       If USER isn't specified then it's read from stdin
 	push [DIR]             Recursively upload a local directory to your site
 	                       If DIR isn't specified then ./ is used
-	upload FILE [FILE]...  Upload individual file(s) to your Neocities site
-	delete FILE [FILE]...  Delete file(s) from your Neocities site
+	upload FILE [FILE]...  Upload file(s) to your Neocities site
+	delete FILE [FILE]...  Delete file(s) on your Neocities site
 	list [pale]            List files from your Neocities site
 	                       If "pale" is specified then plain JSON is printed
-	info                   Information and stats for your site
+	info                   Get information and stats about your site
 	logout                 Logout by clearing the local API key
 EOF
-	exit 1
-}
 
 main "$@"
