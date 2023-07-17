@@ -1,10 +1,10 @@
 #!/bin/sh --
-set -ue
+set -ue; export POSIXLY_CORRECT=1
 # Made by jumps are op (jumpsareop@gmail.com)
 # This software is under GPL version 3 and comes with ABSOLUTELY NO WARRANTY
 
 alias pecho='printf %s\\n'
-export  NEOCITIES_API="${NEOCITIES_API:=https://neocities.org/api}"
+export NEOCITIES_API="${NEOCITIES_API:=https://neocities.org/api}"
 
 # Because of how the internet works only the following is allowed:
 # a-z A-Z 0-9 _ - .
@@ -69,13 +69,20 @@ login(){
 
 push(){
 	cachelist=$(list pale | grep '"path"\|"sha1_hash"')
+	# Skip directories
+	cachelist=$(while IFS=\" read -r _ _ _ path _;do
+		[ -d "$path" ] && continue; pecho "$file"
+	done <<-EOF
+		$cachelist
+	EOF
+	)
 	for dir;do (case $dir in [!/]*)dir=./$dir; esac; cd "$dir"
 	find . -type f -print -exec sh -c '
 	for file;do
 		case $file in *[![:alnum:]_/.-]*)
 			pecho "$file: Invalid file name" >&2; continue
 		esac
-		printf %s\\n "$file"
+		pecho "$file"
 	done' -- '{}' + | while IFS= read -r file;do
 		sum=$(sha1sum <"$file") sum=${sum%% *}
 		printf %s "$cachelist" | while :;do
