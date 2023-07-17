@@ -71,7 +71,7 @@ push(){
 	cachelist=$(list pale | grep '"path"\|"sha1_hash"')
 	# Skip directories
 	cachelist=$(while IFS=\" read -r _ _ _ path _;do
-		[ -d "$path" ] && continue; pecho "$file"
+		[ -d "$path" ] && continue; pecho "$path"
 	done <<-EOF
 		$cachelist
 	EOF
