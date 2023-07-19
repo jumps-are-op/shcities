@@ -68,26 +68,18 @@ login(){
 }
 
 push(){
-	cachelist=$(list pale | grep '"path"\|"sha1_hash"')
-	# Skip directories
-	cachelist=$(while IFS=\" read -r _ _ _ path _;do
-		[ -d "$path" ] && continue; pecho "$path"
-	done <<-EOF
-		$cachelist
-	EOF
-	)
+	cachelist=$(list pale | grep '"path"\|"sha1_hash"\|"is_directory"')
 	for dir;do (case $dir in [!/]*)dir=./$dir; esac; cd "$dir"
 	find . -type f -print -exec sh -c '
-	for file;do
-		case $file in *[![:alnum:]_/.-]*)
-			pecho "$file: Invalid file name" >&2; continue
-		esac
-		pecho "$file"
-	done' -- '{}' + | while IFS= read -r file;do
-		sum=$(sha1sum <"$file") sum=${sum%% *}
+	for file;do case $file in *[![:alnum:]_/.-]*)
+		printf %s\\n "$file: Invalid file name" >&2; continue
+	esac; printf %s\\n "$file"; done' -- '{}' + |
+	while IFS= read -r file;do
+		path= sum=$(sha1sum <"$file") sum=${sum%% *}
 		printf %s "$cachelist" | while :;do
 			IFS=\" read -r _ _ _ path _ || { upload "$file"; break;}
-			IFS=\" read -r _ _ _ remotesum _
+			IFS=\" read -r _ _ isdir _
+			[ "$isdir" = ": false," ] && IFS=\" read -r _ _ _ remotesum _
 			[ "./$path" = "$file" ] && {
 				[ "$remotesum" != "$sum" ] && upload "$file"
 				break

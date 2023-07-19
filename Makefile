@@ -1,7 +1,9 @@
-IN = shcities
-TO = /usr/local/bin
+.POSIX:
+
+PREFIX = /usr/local
+DESTDIR = bin
 
 install:
-	cp -- "${IN}" "${TO}"
+	cp -- shcities ${PREFIX}/${DESTDIR}
 remove:
-	rm -- "${TO}/${IN}"
+	rm -- ${PREFIX}/${DESTDIR}/shcities
