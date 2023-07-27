@@ -70,38 +70,40 @@ login(){
 push(){
 	cachelist=$(list pale | grep '"path"\|"sha1_hash"\|"is_directory"')
 	for dir;do (case $dir in [!/]*)dir=./$dir; esac; cd "$dir"
-	find . -type f -print -exec sh -c '
+	find . -type f -exec sh -c '
 	for file;do case $file in *[![:alnum:]_/.-]*)
 		printf %s\\n "$file: Invalid file name" >&2; continue
 	esac; printf %s\\n "$file"; done' -- '{}' + |
 	while IFS= read -r file;do
-		path= sum=$(sha1sum <"$file") sum=${sum%% *}
-		printf %s "$cachelist" | while :;do
+		sum=$(sha1sum <"$file") sum=${sum%% *}
+		while :;do
 			IFS=\" read -r _ _ _ path _ || { upload "$file"; break;}
-			IFS=\" read -r _ _ isdir _
+			IFS=\" read -r _ _ isdir
 			[ "$isdir" = ": false," ] && IFS=\" read -r _ _ _ remotesum _
 			[ "./$path" = "$file" ] && {
 				[ "$remotesum" != "$sum" ] && upload "$file"
 				break
 			}
-		done
+		done <<-EOF
+			$cachelist
+		EOF
 	done);done
 }
 
-upload(){ for file;do
+upload() for file;do
 	:<"$file"
 	[ -d "$file" ] && { pecho "$PRG: $file: Is a directory"; exit 1;}
 	printf "\\r[K%s" "[1;33m[UPLOADING][m ${file:?}..."
 	request upload -F "$file=@$file" | parseresult UPLOADED "$file"
-done;}
+done
 
 
-delete(){ for file;do
+delete() for file;do
 	printf %s "[1;33m[DELETING][m ${file:?}..."
 	request delete -d "filenames[]=$file" | parseresult DELETED "$file"
-done;}
+done
 
-parseresult(){ sed -n '
+parseresult() sed -n '
 	# Read everything
 	:a; N; $!ba
 
@@ -122,15 +124,17 @@ parseresult(){ sed -n '
 	i\
 '"[1;33m[???][m ${2:?}[K"'
 	q
-';}
+';
 
-list(){ request list | { [ "${1-}" = pale ] && cat
-	sed -n 's/^[[:space:]]*"path": "\(.*\)",*$/\1/p';};}
+list() case ${1-} in
+	pale)request list;;
+	*)request list | sed -n 's/^[[:space:]]*"path": "\(.*\)",*$/\1/p'
+esac
 
-info(){ request info |
-	sed '2,3d;s/,$//; s/ *[][{}] *$//; s/    //; /^$/d; s/"\([^"]*\)"/\1/g';}
+info() request info |
+	sed '2,3d;s/,$//; s/ *[][{}] *$//; s/    //; /^$/d; s/"\([^"]*\)"/\1/g';
 
-request(){ curl -Ss -H"Authorization: Bearer ${apikey:?}" "$NEOCITIES_API/$@";}
+request() curl -Ss -H"Authorization: Bearer ${apikey:?}" "$NEOCITIES_API/$@";
 
 dishelp(){ cat <<EOF; exit 1;}
 shcities  Neocities CLI tool in POSIX™ shell
