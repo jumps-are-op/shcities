@@ -94,13 +94,13 @@ push(){
 upload() for file;do
 	:<"$file"
 	[ -d "$file" ] && { pecho "$PRG: $file: Is a directory"; exit 1;}
-	printf %s "${noclr-[1;33m}[UPLOADING]${noclr[m} ${file:?}..."
+	printf %s "${noclr-[1;33m}[UPLOADING]${noclr-[m} ${file##*/}..."
 	request upload -F "$file=@$file" | parseresult UPLOADED "$file"
 done
 
 
 delete() for file;do
-	printf %s "${noclr-[1;33m}[DELETING]${noclr-[m} ${file:?}..."
+	printf %s "${noclr-[1;33m}[DELETING]${noclr-[m} ${file##*/}..."
 	request delete -d "filenames[]=$file" | parseresult DELETED "$file"
 done
 
